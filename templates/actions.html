@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Email Phishing - URL & Attachment Actions</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    th { background-color: #f4f4f4; }
+    button { margin-left: 8px; }
+    select { min-width: 120px; }
+    #retrain-btn { margin-bottom: 20px; padding: 10px 20px; }
+    .flag-controls { text-align: center; }
+  </style>
+</head>
+<body>
+
+<h1>Email Phishing - URL & Attachment Actions</h1>
+<button id="retrain-btn" aria-label="Retrain the phishing detection model">Retrain Model</button>
+
+<div class="section" id="urls-section" aria-label="List of URLs">
+  <h2>URLs</h2>
+  <table aria-describedby="urls-section">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>URL</th>
+        <th>Flag</th>
+        <th>Whois</th>
+        <th>OpenPhish</th>
+      </tr>
+    </thead>
+    <tbody id="urls-tbody"></tbody>
+  </table>
+  <button id="save-flags-btn" class="save-btn" disabled>Save Flags to CSV</button>
+</div>
+
+<div class="section" id="attachments-section" aria-label="List of Attachments">
+  <h2>Attachments</h2>
+  <table aria-describedby="attachments-section">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Filename</th>
+        <th>Hash</th>
+        <th>VirusTotal</th>
+      </tr>
+    </thead>
+    <tbody id="attachments-tbody">
+      {% if unique_attachments %}
+        {% for att in unique_attachments %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ att.filename }}</td>
+            <td>{{ att.md5 or 'N/A' }}</td>
+            <td>
+              <button type="button" 
+                      aria-label="Query VirusTotal for hash {{ att.md5 }}"
+                      {% if not att.md5 %}disabled{% endif %}
+                      onclick="queryVirusTotal('{{ att.md5 }}', this)">VirusTotal</button>
+            </td>
+          </tr>
+        {% endfor %}
+      {% else %}
+        <tr><td colspan="4" style="text-align:center;">No attachments found.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  const urlsTbody = document.getElementById('urls-tbody');
+  const saveFlagsBtn = document.getElementById('save-flags-btn');
+  const retrainBtn = document.getElementById('retrain-btn');
+
+  let allEmails = [];
+  let allUrls = [];
+
+  async function fetchEmails() {
+    try {
+      const res = await fetch('/emails');
+      if (!res.ok) throw new Error('Failed to fetch emails');
+      const data = await res.json();
+      if (!Array.isArray(data)) throw new Error('Invalid data format');
+
+      allEmails = data;
+      extractUrls();
+      renderUrls();
+    } catch (e) {
+      console.error('Error fetching emails:', e);
+      urlsTbody.innerHTML = `<tr><td colspan="4" style="text-align:center;">Error loading URLs</td></tr>`;
+    }
+  }
+
+  function extractUrls() {
+    const urlMap = new Map();
+
+    for (const email of allEmails) {
+      if (email.urls && Array.isArray(email.urls)) {
+        for (const u of email.urls) {
+          if (!urlMap.has(u.url)) {
+            urlMap.set(u.url, {
+              url: u.url,
+              label: u.label ?? 1,
+            });
+          }
+        }
+      }
+    }
+
+    allUrls = Array.from(urlMap.values());
+  }
+
+  function renderUrls() {
+    if (allUrls.length === 0) {
+      urlsTbody.innerHTML = `<tr><td colspan="4" style="text-align:center;">No URLs found.</td></tr>`;
+      saveFlagsBtn.disabled = true;
+      return;
+    }
+    saveFlagsBtn.disabled = false;
+    urlsTbody.innerHTML = '';
+    allUrls.forEach((u, idx) => {
+      const tr = document.createElement('tr');
+
+      const tdIdx = document.createElement('td');
+      tdIdx.textContent = idx + 1;
+      tr.appendChild(tdIdx);
+
+      const tdUrl = document.createElement('td');
+      const link = document.createElement('a');
+      link.href = u.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = u.url;
+      tdUrl.appendChild(link);
+      tr.appendChild(tdUrl);
+
+      const tdFlag = document.createElement('td');
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', `Flag URL ${u.url}`);
+      select.dataset.url = u.url;
+      select.innerHTML = `
+        <option value="safe" ${u.label === 0 ? 'selected' : ''}>Safe</option>
+        <option value="phishing" ${u.label === 1 ? 'selected' : ''}>Phishing</option>
+      `;
+      tdFlag.appendChild(select);
+      tr.appendChild(tdFlag);
+
+      const tdWhois = document.createElement('td');
+      const whoisBtn = document.createElement('button');
+      whoisBtn.textContent = 'Whois';
+      whoisBtn.setAttribute('aria-label', `Lookup Whois for ${u.url}`);
+      whoisBtn.type = 'button';
+      whoisBtn.addEventListener('click', () => {
+        try {
+          const domain = new URL(u.url).hostname;
+          window.open(`https://whois.domaintools.com/${domain}`, '_blank');
+        } catch {
+          alert('Invalid URL for Whois lookup');
+        }
+      });
+      tdWhois.appendChild(whoisBtn);
+      tr.appendChild(tdWhois);
+      const tdOpenPhish = document.createElement('td');
+const openPhishBtn = document.createElement('button');
+openPhishBtn.textContent = 'OpenPhish';
+openPhishBtn.type = 'button';
+openPhishBtn.setAttribute('aria-label', `Check OpenPhish feed for ${u.url}`);
+openPhishBtn.addEventListener('click', async () => {
+  openPhishBtn.disabled = true;
+  openPhishBtn.textContent = 'Checking...';
+
+  try {
+    const domain = new URL(u.url).hostname;
+
+    const res = await fetch('/check_openphish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: u.url, domain }),
+    });
+
+    const data = await res.json();
+
+    if (res.ok) {
+      if (data.found) {
+        alert(`Phishing URL detected in OpenPhish feed: ${u.url}`);
+      } else {
+        alert(`URL not found in OpenPhish feed: ${u.url}`);
+      }
+    } else {
+      alert('Error checking OpenPhish feed: ' + (data.error || res.statusText));
+    }
+  } catch (e) {
+    alert('Failed to check OpenPhish feed: ' + e.message);
+  } finally {
+    openPhishBtn.disabled = false;
+    openPhishBtn.textContent = 'OpenPhish';
+  }
+});
+tdOpenPhish.appendChild(openPhishBtn);
+tr.appendChild(tdOpenPhish);
+
+      urlsTbody.appendChild(tr);
+    });
+  }
+
+  async function saveFlags() {
+    const csvLines = ['url,label'];
+
+    allUrls.forEach(u => {
+      const selects = urlsTbody.querySelectorAll('select');
+      let select = null;
+      for (const s of selects) {
+        if (s.dataset.url === u.url) {
+          select = s;
+          break;
+        }
+      }
+      if (!select) return;
+
+      const val = select.value;
+      if (val === 'safe' || val === 'phishing') {
+        const label = val === 'safe' ? 0 : 1;
+        const urlEscaped = u.url.includes(',') ? `"${u.url.replace(/"/g, '""')}"` : u.url;
+        csvLines.push(`${urlEscaped},${label}`);
+      }
+    });
+
+    if (csvLines.length <= 1) {
+      alert('No URL flags selected for saving.');
+      return;
+    }
+
+    const csvContent = csvLines.join('\n');
+    try {
+      const res = await fetch('/save_flags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/csv' },
+        body: csvContent,
+      });
+      if (!res.ok) throw new Error('Failed to save flags');
+      alert('Flags saved successfully!');
+    } catch (e) {
+      alert('Error saving flags: ' + e.message);
+    }
+  }
+
+  async function retrainModel() {
+    retrainBtn.disabled = true;
+    retrainBtn.textContent = 'Retraining...';
+    try {
+      const res = await fetch('/retrain', { method: 'POST' });
+      if (!res.ok) throw new Error('Retrain failed');
+      alert('Retraining completed successfully!');
+    } catch (e) {
+      alert('Error during retraining: ' + e.message);
+    } finally {
+      retrainBtn.disabled = false;
+      retrainBtn.textContent = 'Retrain Model';
+    }
+  }
+
+window.queryVirusTotal = async function(hash, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Querying...';
+  try {
+    const res = await fetch('/virus_total_query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hash }),
+    });
+
+    const data = await res.json();
+
+    if (res.ok && data.result === 'Result found' && data.url) {
+      window.open(data.url, '_blank');
+    } else {
+      alert('Not found');
+    }
+  } catch (e) {
+    alert(`Error querying VirusTotal: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'VirusTotal';
+  }
+};
+  saveFlagsBtn.addEventListener('click', saveFlags);
+  retrainBtn.addEventListener('click', retrainModel);
+  fetchEmails();
+})();
+</script>
+
+</body>
+</html>

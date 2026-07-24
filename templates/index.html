@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Email Phishing Dashboard</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    margin: 1rem;
+    background: #f9f9f9;
+    color: #333;
+  }
+  h1 {
+    text-align: center;
+    margin-bottom: 1rem;
+  }
+
+  #top-info {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+  }
+  #stats, #bar-graph {
+    font-size: 1.2rem;
+    font-weight: bold;
+    background: white;
+    padding: 1rem;
+    border-radius: 5px;
+    box-shadow: 1px 1px 4px rgba(0,0,0,0.1);
+    flex: 1 1 48%;
+    margin-bottom: 1rem;
+  }
+
+  #filters {
+    background: white;
+    padding: 1rem;
+    border-radius: 6px;
+    box-shadow: 1px 1px 4px rgba(0,0,0,0.1);
+    margin-bottom: 1rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    align-items: center;
+  }
+  #filters label {
+    font-weight: bold;
+    white-space: nowrap;
+  }
+  #filters select, #filters button {
+    padding: 0.3rem 0.6rem;
+    font-size: 1rem;
+  }
+
+  table {
+    width: 100%;
+    margin: 0 auto 2rem;
+    border-collapse: collapse;
+    background: white;
+    box-shadow: 1px 1px 5px rgba(0,0,0,0.1);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  th, td {
+    border: 1px solid #ddd;
+    padding: 0.5rem 1rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #f2f2f2;
+  }
+  td.urls {
+    white-space: nowrap;
+  }
+  td.attachments {
+    font-size: 0.9rem;
+    color: #555;
+  }
+  td.expand-btn {
+    text-align: center;
+    width: 80px;
+  }
+  button.expand {
+    cursor: pointer;
+    padding: 0.3rem 0.6rem;
+    border: none;
+    background: #007bff;
+    color: white;
+    border-radius: 4px;
+  }
+  button.expand:hover {
+    background: #0056b3;
+  }
+
+  .expanded-content {
+    background: #fafafa;
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
+    color: #333;
+  }
+
+  #pagination {
+    text-align: center;
+    margin-bottom: 2rem;
+  }
+  #pagination button {
+    margin: 0 0.2rem;
+    padding: 0.4rem 0.8rem;
+    font-size: 1rem;
+    cursor: pointer;
+    border: 1px solid #007bff;
+    background: white;
+    border-radius: 4px;
+    color: #007bff;
+  }
+  #pagination button.active, #pagination button:hover:not(:disabled) {
+    font-weight: bold;
+    background: #007bff;
+    color: white;
+  }
+  #pagination button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+    border-color: #ccc;
+    color: #ccc;
+    background: #f9f9f9;
+  }
+</style>
+</head>
+<body>
+<h1>Email Phishing Dashboard</h1>
+<div style="text-align: center; margin-bottom: 1rem;">
+    <button onclick="window.location.href='/actions'" style="padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer;">
+      Actions
+    </button>
+ </div>
+
+<div id="top-info">
+  <div id="stats" aria-live="polite" aria-atomic="true">
+    <div>TOTAL EMAILS PROCESSED <h1><span id="total-emails">0</span></h1></div>
+    <div>TOTAL URLs FOUND<h1><span id="total-urls">0</span></h1></div>
+  </div>
+  <div id="bar-graph">
+    <canvas id="urlChart" width="300" height="150" aria-label="Bar chart showing safe and phishing URLs count" role="img"></canvas>
+  </div>
+</div>
+
+<div id="filters" aria-label="Filter options">
+  <label for="senderFilter">Sender:</label>
+  <select id="senderFilter" name="senderFilter" aria-controls="emailsTable">
+    <option value="all">All</option>
+  </select>
+
+  <label for="receiverFilter">Receiver:</label>
+  <select id="receiverFilter" name="receiverFilter" aria-controls="emailsTable">
+    <option value="all">All</option>
+  </select>
+
+  <label for="attachmentFilter">Has Attachments:</label>
+  <select id="attachmentFilter" name="attachmentFilter" aria-controls="emailsTable">
+    <option value="all">All</option>
+    <option value="yes">Yes</option>
+    <option value="no">No</option>
+  </select>
+
+  <label for="urlTypeFilter">URL Type:</label>
+  <select id="urlTypeFilter" name="urlTypeFilter" aria-controls="emailsTable">
+    <option value="all">All</option>
+    <option value="safe">Safe</option>
+    <option value="phish">Phishing</option>
+  </select>
+
+  <button id="clearFilters" aria-label="Clear all filters">Clear Filters</button>
+</div>
+
+<table id="emailsTable" aria-label="Emails table" role="table">
+  <thead>
+    <tr>
+      <th scope="col">#</th>
+      <th scope="col">Subject</th>
+      <th scope="col">From</th>
+      <th scope="col">To</th>
+      <th scope="col">Date</th>
+      <th scope="col">URLs (Safe / Phish)</th>
+      <th scope="col">Attachments</th>
+      <th scope="col">Expand</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<div id="pagination" role="navigation" aria-label="Pagination controls"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+(() => {
+  'use strict';
+
+  let allEmails = [];
+  let filteredEmails = [];
+  const expandedRows = new Set();
+  let currentPage = 1;
+  const pageSize = 10;
+
+  const totalEmailsElem = document.getElementById('total-emails');
+  const totalUrlsElem = document.getElementById('total-urls');
+  const emailsTableBody = document.querySelector('#emailsTable tbody');
+  const paginationElem = document.getElementById('pagination');
+
+  const senderFilter = document.getElementById('senderFilter');
+  const receiverFilter = document.getElementById('receiverFilter');
+  const attachmentFilter = document.getElementById('attachmentFilter');
+  const urlTypeFilter = document.getElementById('urlTypeFilter');
+  const clearFiltersBtn = document.getElementById('clearFilters');
+
+  let urlChart = null;
+  let filtersPopulated = false;
+
+  let lastEmailCount = 0;
+
+  function escapeHtml(text) {
+    if (!text) return '';
+    return text.replace(/[&<>"']/g, m => {
+      switch(m) {
+        case '&': return '&amp;';
+        case '<': return '&lt;';
+        case '>': return '&gt;';
+        case '"': return '&quot;';
+        case "'": return '&#39;';
+        default: return m;
+      }
+    });
+  }
+
+  function cleanName(name) {
+    if (!name) return '';
+    return name.replace(/[<>"]/g, '').trim();
+  }
+
+  function makeEmailKey(email) {
+    return [
+      email.subject || '',
+      email.date || '',
+      cleanName(email.from),
+      cleanName(email.to)
+    ].join('||');
+  }
+
+  function compareDatesDesc(a, b) {
+    const da = new Date(a.date || 0).getTime();
+    const db = new Date(b.date || 0).getTime();
+    return db - da;
+  }
+
+  function getUniqueSenders(emails) {
+    const set = new Set();
+    for (const e of emails) {
+      set.add(cleanName(e.from));
+    }
+    return Array.from(set).sort();
+  }
+
+  function getUniqueReceivers(emails) {
+    const set = new Set();
+    for (const e of emails) {
+      set.add(cleanName(e.to));
+    }
+    return Array.from(set).sort();
+  }
+
+  function populateFilterDropdowns() {
+    if (!filtersPopulated) {
+      senderFilter.innerHTML = '<option value="all">All</option>';
+      receiverFilter.innerHTML = '<option value="all">All</option>';
+
+      getUniqueSenders(allEmails).forEach(sender => {
+        senderFilter.innerHTML += `<option value="${escapeHtml(sender)}">${escapeHtml(sender)}</option>`;
+      });
+      getUniqueReceivers(allEmails).forEach(receiver => {
+        receiverFilter.innerHTML += `<option value="${escapeHtml(receiver)}">${escapeHtml(receiver)}</option>`;
+      });
+
+      filtersPopulated = true;
+    } else {
+      const currentSenders = new Set([...senderFilter.options].map(o => o.value));
+      const currentReceivers = new Set([...receiverFilter.options].map(o => o.value));
+
+      getUniqueSenders(allEmails).forEach(sender => {
+        if (!currentSenders.has(sender)) {
+          const opt = document.createElement('option');
+          opt.value = sender;
+          opt.textContent = sender;
+          senderFilter.appendChild(opt);
+          currentSenders.add(sender);
+        }
+      });
+      getUniqueReceivers(allEmails).forEach(receiver => {
+        if (!currentReceivers.has(receiver)) {
+          const opt = document.createElement('option');
+          opt.value = receiver;
+          opt.textContent = receiver;
+          receiverFilter.appendChild(opt);
+          currentReceivers.add(receiver);
+        }
+      });
+    }
+  }
+
+  function updateStats(emails) {
+    totalEmailsElem.textContent = emails.length.toString();
+    const totalUrls = emails.reduce((acc, e) => acc + ((e.urls && e.urls.length) || 0), 0);
+    totalUrlsElem.textContent = totalUrls.toString();
+  }
+
+  function updateBarGraph(emails) {
+    const safeCount = emails.reduce((acc, e) => acc + ((e.urls && e.urls.filter(u => u.label === 0).length) || 0), 0);
+    const phishCount = emails.reduce((acc, e) => acc + ((e.urls && e.urls.filter(u => u.label === 1).length) || 0), 0);
+
+    if (!urlChart) {
+      const ctx = document.getElementById('urlChart').getContext('2d');
+      urlChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: ['Safe URLs', 'Phishing URLs'],
+          datasets: [{
+            label: 'URL Count',
+            data: [safeCount, phishCount],
+            backgroundColor: ['#28a745', '#dc3545']
+          }]
+        },
+        options: {
+          responsive: true,
+          animation: false,
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { precision: 0 }
+            }
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: { enabled: true }
+          }
+        }
+      });
+    } else {
+      urlChart.data.datasets[0].data = [safeCount, phishCount];
+      urlChart.update();
+    }
+  }
+
+  function applyFilters() {
+    filteredEmails = allEmails.filter(email => {
+      if (senderFilter.value !== 'all' && cleanName(email.from) !== senderFilter.value) {
+        return false;
+      }
+      if (receiverFilter.value !== 'all' && cleanName(email.to) !== receiverFilter.value) {
+        return false;
+      }
+      if (attachmentFilter.value !== 'all') {
+        const hasAttach = (email.attachments && email.attachments.length > 0);
+        if (attachmentFilter.value === 'yes' && !hasAttach) return false;
+        if (attachmentFilter.value === 'no' && hasAttach) return false;
+      }
+      if (urlTypeFilter.value !== 'all') {
+        const hasUrlType = (email.urls && email.urls.some(u => {
+          if (urlTypeFilter.value === 'safe') return u.label === 0;
+          if (urlTypeFilter.value === 'phish') return u.label === 1;
+          return false;
+        }));
+        if (!hasUrlType) return false;
+      }
+      return true;
+    });
+
+    filteredEmails.sort(compareDatesDesc);
+
+    const maxPage = Math.max(1, Math.ceil(filteredEmails.length / pageSize));
+    if (currentPage > maxPage) currentPage = maxPage;
+  }
+
+  function renderTable() {
+    emailsTableBody.innerHTML = '';
+
+    if (filteredEmails.length === 0) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 8;
+      td.textContent = 'No emails found for current filter.';
+      td.style.textAlign = 'center';
+      tr.appendChild(td);
+      emailsTableBody.appendChild(tr);
+      renderPagination();
+      return;
+    }
+
+    const startIdx = (currentPage - 1) * pageSize;
+    const endIdx = Math.min(startIdx + pageSize, filteredEmails.length);
+
+    for (let i = startIdx; i < endIdx; i++) {
+      const email = filteredEmails[i];
+      const emailKey = makeEmailKey(email);
+      const isExpanded = expandedRows.has(emailKey);
+      const tr = document.createElement('tr');
+      const tdNum = document.createElement('td');
+      tdNum.textContent = i + 1;
+      tr.appendChild(tdNum);
+      const tdSubj = document.createElement('td');
+      tdSubj.textContent = email.subject || '(No Subject)';
+      tr.appendChild(tdSubj);
+      const tdFrom = document.createElement('td');
+      tdFrom.textContent = cleanName(email.from) || '';
+      tr.appendChild(tdFrom);
+      const tdTo = document.createElement('td');
+      tdTo.textContent = cleanName(email.to) || '';
+      tr.appendChild(tdTo);
+      const tdDate = document.createElement('td');
+      tdDate.textContent = email.date || '';
+      tr.appendChild(tdDate);
+      const tdUrls = document.createElement('td');
+      tdUrls.className = 'urls';
+      const safeUrls = email.urls ? email.urls.filter(u => u.label === 0).length : 0;
+      const phishUrls = email.urls ? email.urls.filter(u => u.label === 1).length : 0;
+      tdUrls.textContent = `${safeUrls} / ${phishUrls}`;
+      tr.appendChild(tdUrls);
+      const tdAttach = document.createElement('td');
+      tdAttach.className = 'attachments';
+      tdAttach.textContent = (email.attachments && email.attachments.length) ? email.attachments.length : '0';
+      tr.appendChild(tdAttach);
+      const tdExpand = document.createElement('td');
+      tdExpand.className = 'expand-btn';
+      const btn = document.createElement('button');
+      btn.className = 'expand';
+      btn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+      btn.setAttribute('aria-controls', 'expanded-' + i);
+      btn.textContent = isExpanded ? 'Collapse' : 'Expand';
+      btn.addEventListener('click', () => {
+        if (expandedRows.has(emailKey)) {
+          expandedRows.delete(emailKey);
+        } else {
+          expandedRows.add(emailKey);
+        }
+        renderTable(); 
+      });
+      tdExpand.appendChild(btn);
+      tr.appendChild(tdExpand);
+
+      emailsTableBody.appendChild(tr);
+
+      if (isExpanded) {
+        const trExp = document.createElement('tr');
+        trExp.className = 'expanded-content-row';
+
+        const tdExp = document.createElement('td');
+        tdExp.id = 'expanded-' + i;
+        tdExp.colSpan = 8;
+        tdExp.className = 'expanded-content';
+
+        const urlsHtml = (email.urls && email.urls.length)
+          ? `<strong>URLs:</strong> <ul>${email.urls.map(u => `<li>${escapeHtml(u.url)} - ${u.label === 1 ? '<span style="color:#dc3545;">Phishing</span>' : '<span style="color:#28a745;">Safe</span>'}</li>`).join('')}</ul>`
+          : '<strong>URLs:</strong> None <br>';
+
+        const attachmentsHtml = (email.attachments && email.attachments.length)
+  ? `<strong>Attachments:</strong> <ul>${email.attachments.map(a => `<li>${escapeHtml(a.filename || 'Unnamed')} - MD5: ${escapeHtml(a.md5 || '')}</li>`).join('')}</ul>`
+  : '<strong>Attachments:</strong> None';
+
+
+        tdExp.innerHTML = urlsHtml + attachmentsHtml;
+        trExp.appendChild(tdExp);
+        emailsTableBody.appendChild(trExp);
+      }
+    }
+
+    renderPagination();
+  }
+
+  function renderPagination() {
+    paginationElem.innerHTML = '';
+
+    const totalPages = Math.max(1, Math.ceil(filteredEmails.length / pageSize));
+
+    if (totalPages <= 1) return;
+
+    const createBtn = (text, page, disabled = false, isActive = false) => {
+      const btn = document.createElement('button');
+      btn.textContent = text;
+      btn.disabled = disabled;
+      if (isActive) btn.classList.add('active');
+      btn.addEventListener('click', () => {
+        currentPage = page;
+        renderTable();
+      });
+      return btn;
+    };
+
+    paginationElem.appendChild(createBtn('Prev', currentPage - 1, currentPage === 1));
+    let startPage = Math.max(1, currentPage - 3);
+    let endPage = Math.min(totalPages, currentPage + 3);
+    if (endPage - startPage < 6) {
+      if (startPage === 1) {
+        endPage = Math.min(totalPages, startPage + 6);
+      } else if (endPage === totalPages) {
+        startPage = Math.max(1, endPage - 6);
+      }
+    }
+
+    for (let p = startPage; p <= endPage; p++) {
+      paginationElem.appendChild(createBtn(p, p, false, p === currentPage));
+    }
+
+    paginationElem.appendChild(createBtn('Next', currentPage + 1, currentPage === totalPages));
+  }
+
+  function clearFilters() {
+    senderFilter.value = 'all';
+    receiverFilter.value = 'all';
+    attachmentFilter.value = 'all';
+    urlTypeFilter.value = 'all';
+    currentPage = 1;
+    applyFilters();
+    updateStats(filteredEmails);
+    updateBarGraph(filteredEmails);
+    renderTable();
+  }
+
+  async function fetchEmails() {
+    try {
+      const response = await fetch('/emails');
+      if (!response.ok) {
+        console.error('Failed to fetch emails:', response.statusText);
+        return;
+      }
+      const emails = await response.json();
+      if (!Array.isArray(emails)) {
+        console.error('Invalid response format: expected array');
+        return;
+      }
+
+      if (emails.length > lastEmailCount) {
+        lastEmailCount = emails.length;
+        allEmails = emails;
+
+        populateFilterDropdowns();
+        applyFilters();
+        updateStats(filteredEmails);
+        updateBarGraph(filteredEmails);
+        renderTable();
+      }
+
+    } catch (err) {
+      console.error('Error fetching emails:', err);
+    }
+  }
+
+  [senderFilter, receiverFilter, attachmentFilter, urlTypeFilter].forEach(filter => {
+    filter.addEventListener('change', () => {
+      currentPage = 1;
+      applyFilters();
+      updateStats(filteredEmails);
+      updateBarGraph(filteredEmails);
+      renderTable();
+    });
+  });
+
+  clearFiltersBtn.addEventListener('click', () => {
+    clearFilters();
+  });
+
+  fetchEmails();
+  setInterval(fetchEmails, 5000);
+
+})();
+</script>
+</body>
+</html>
